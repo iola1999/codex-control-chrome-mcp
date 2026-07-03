@@ -32,9 +32,12 @@ function makeRuntime({ staleUntilReattach = false, alwaysStale = false } = {}) {
   };
 }
 
-test("isNotAttachedError matches the extension's stale-attach error only", () => {
-  assert.equal(isNotAttachedError(notAttached()), true);
+test("isNotAttachedError matches every lost-attachment string the extension emits", () => {
+  assert.equal(isNotAttachedError(notAttached()), true); // Chrome sendCommand
+  assert.equal(isNotAttachedError(new Error("Debugger unattached")), true); // extension se-check
+  assert.equal(isNotAttachedError(new Error("Detached while handling command.")), true); // mid-command
   assert.equal(isNotAttachedError(new Error("Timed out waiting for executeCdp")), false);
+  assert.equal(isNotAttachedError(new Error("boom")), false);
   assert.equal(isNotAttachedError(null), false);
 });
 

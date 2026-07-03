@@ -6,6 +6,12 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-07-04
+
+### Fixed
+
+- The self-heal now recognizes every string the extension uses for a lost debugger attachment, not just Chrome's `Debugger is not attached`. A concurrency race soak (`scripts/concurrency-check.mjs --inject-detach`, which detaches a tab mid-command) surfaced two more that were slipping through unhealed: `Debugger unattached` (the extension's own `se`-map check) and `Detached while handling command.` (detached mid-command). `isNotAttachedError` now matches all three, so `withSession` recovers them too. Under the race soak this took unrecovered "not attached" failures from a handful to zero.
+
 ## [1.4.0] - 2026-07-04
 
 ### Changed

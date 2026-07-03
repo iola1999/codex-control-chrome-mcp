@@ -400,8 +400,13 @@ export async function withSession(runtime, tabId, run) {
   }
 }
 
+// The extension surfaces a lost debugger attachment with several distinct
+// strings, all of which are recoverable by a detach + re-attach:
+//   - "Debugger is not attached to the tab with id: N"  (Chrome, via sendCommand)
+//   - "Debugger unattached"                             (extension's own se-check)
+//   - "Detached while handling command."                (detached mid-command)
 export function isNotAttachedError(error) {
-  return /not attached/i.test(error?.message ?? String(error ?? ""));
+  return /not attached|unattached|detached while/i.test(error?.message ?? String(error ?? ""));
 }
 
 async function executeCdp(runtime, { tabId, method, params = {}, timeoutMs }) {
