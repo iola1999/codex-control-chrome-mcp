@@ -6,6 +6,12 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-07-04
+
+### Added
+
+- `codex-control-chrome-mcp --version` (also `-v` and `version`) prints the package name and version. Previously the CLI had no way to report its own version, so `-v`/`--version` fell through to `Unknown command`.
+
 ## [1.3.1] - 2026-07-04
 
 ### Fixed

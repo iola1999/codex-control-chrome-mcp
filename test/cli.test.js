@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyInvocation } from "../src/cli.js";
+import { classifyInvocation, runCli } from "../src/cli.js";
+import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/package-meta.js";
 
 const ORIGIN = "chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/";
 
@@ -46,5 +47,30 @@ test("subcommands are classified as commands, not the native host", () => {
     const invocation = classifyInvocation([command]);
     assert.equal(invocation.mode, "command");
     assert.equal(invocation.command, command);
+  }
+});
+
+test("version flags are classified as commands", () => {
+  for (const flag of ["-v", "--version", "version"]) {
+    const invocation = classifyInvocation([flag]);
+    assert.equal(invocation.mode, "command");
+    assert.equal(invocation.command, flag);
+  }
+});
+
+test("--version / -v / version print the package name and version", async () => {
+  for (const flag of ["--version", "-v", "version"]) {
+    const original = process.stdout.write;
+    let out = "";
+    process.stdout.write = (chunk) => {
+      out += chunk;
+      return true;
+    };
+    try {
+      await runCli(["node", "cli.js", flag]);
+    } finally {
+      process.stdout.write = original;
+    }
+    assert.equal(out, `${PACKAGE_NAME} ${PACKAGE_VERSION}\n`);
   }
 });

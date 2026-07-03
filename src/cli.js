@@ -10,6 +10,7 @@ import {
 import { DEFAULT_BROWSER, SUPPORTED_BROWSERS } from "./constants.js";
 import { listBridgeSockets } from "./bridge-client.js";
 import { probeLengthPrefixedSocket } from "./probe.js";
+import { PACKAGE_NAME, PACKAGE_VERSION } from "./package-meta.js";
 
 export async function runCli(argv) {
   const args = argv.slice(2);
@@ -65,6 +66,11 @@ export async function runCli(argv) {
       printJson(await probeLengthPrefixedSocket(socketPath));
       return;
     }
+    case "version":
+    case "--version":
+    case "-v":
+      process.stdout.write(`${PACKAGE_NAME} ${PACKAGE_VERSION}\n`);
+      return;
     case "help":
     case "--help":
     case "-h":
@@ -157,6 +163,7 @@ Usage:
   codex-control-chrome-mcp uninstall-native-host [--force] [--browser <chrome|edge|all>]
   codex-control-chrome-mcp status [--browser <chrome|edge|all>]
   codex-control-chrome-mcp probe-socket <socket-path>
+  codex-control-chrome-mcp --version
 
 Notes:
   --stdio is the MCP server mode for Agent tools.
