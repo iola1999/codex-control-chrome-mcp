@@ -6,7 +6,11 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-07-03
+## [1.3.1] - 2026-07-04
+
+### Fixed
+
+- `chrome_evaluate`, `chrome_navigate`, and `chrome_screenshot` now self-heal a stale debugger attachment instead of dead-ending on `Debugger is not attached`. Each tool already attaches before sending CDP commands, but the extension tracks attachments in memory: when Chrome tears an attachment down out-of-band (a competing debugger client, DevTools, or a renderer/process swap), that flag can go stale, so a fresh `attach` short-circuits and reports success without actually re-attaching and the next command fails with `Debugger is not attached`. The tab then stayed wedged — `attach` kept reporting `ok` while every command failed — and only a new tab recovered. These tools now retry once on that specific error by issuing a `detach` (which clears the stale flag; it may itself report "not attached", which is expected and ignored) followed by a real `attach`, so a previously wedged tab recovers automatically. The self-heal wrapper is covered by regression tests. This addresses recovery in the bridge only; the underlying churn comes from multiple debugger clients contending for the same tab, so reducing competing browser-control stacks still helps.
 
 ### Changed
 

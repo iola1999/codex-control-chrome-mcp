@@ -229,15 +229,15 @@ function registerTools(server, runtime) {
         url: z.string().url(),
       },
     },
-    async ({ tabId, url }) => {
-      await runtime.request("attach", { tabId });
-      await executeCdp(runtime, { tabId, method: "Page.enable", params: {} });
-      return toolResult(await executeCdp(runtime, {
-        tabId,
-        method: "Page.navigate",
-        params: { url },
-      }));
-    },
+    async ({ tabId, url }) =>
+      toolResult(await withReattach(runtime, tabId, async () => {
+        await executeCdp(runtime, { tabId, method: "Page.enable", params: {} });
+        return await executeCdp(runtime, {
+          tabId,
+          method: "Page.navigate",
+          params: { url },
+        });
+      })),
   );
 
   server.registerTool(
@@ -250,19 +250,19 @@ function registerTools(server, runtime) {
         awaitPromise: z.boolean().default(true),
       },
     },
-    async ({ tabId, expression, awaitPromise }) => {
-      await runtime.request("attach", { tabId });
-      await executeCdp(runtime, { tabId, method: "Runtime.enable", params: {} });
-      return toolResult(await executeCdp(runtime, {
-        tabId,
-        method: "Runtime.evaluate",
-        params: {
-          expression,
-          awaitPromise,
-          returnByValue: true,
-        },
-      }));
-    },
+    async ({ tabId, expression, awaitPromise }) =>
+      toolResult(await withReattach(runtime, tabId, async () => {
+        await executeCdp(runtime, { tabId, method: "Runtime.enable", params: {} });
+        return await executeCdp(runtime, {
+          tabId,
+          method: "Runtime.evaluate",
+          params: {
+            expression,
+            awaitPromise,
+            returnByValue: true,
+          },
+        });
+      })),
   );
 
   server.registerTool(
@@ -274,16 +274,16 @@ function registerTools(server, runtime) {
         format: z.enum(["png", "jpeg", "webp"]).default("png"),
       },
     },
-    async ({ tabId, format }) => {
-      await runtime.request("attach", { tabId });
-      await executeCdp(runtime, { tabId, method: "Page.enable", params: {} });
-      return toolResult(await executeCdp(runtime, {
-        tabId,
-        method: "Page.captureScreenshot",
-        params: { format, captureBeyondViewport: true },
-        timeoutMs: 30_000,
-      }));
-    },
+    async ({ tabId, format }) =>
+      toolResult(await withReattach(runtime, tabId, async () => {
+        await executeCdp(runtime, { tabId, method: "Page.enable", params: {} });
+        return await executeCdp(runtime, {
+          tabId,
+          method: "Page.captureScreenshot",
+          params: { format, captureBeyondViewport: true },
+          timeoutMs: 30_000,
+        });
+      })),
   );
 
   server.registerTool(
@@ -317,6 +317,38 @@ function registerTools(server, runtime) {
       return toolResult({ ok: true });
     },
   );
+}
+
+/**
+ * Attach the debugger, run a CDP sequence, and self-heal a stale-attach state.
+ *
+ * The Codex Chrome extension tracks debugger attachments in memory. When Chrome
+ * tears an attachment down out-of-band (a competing debugger client, DevTools, a
+ * renderer/process swap), that flag can go stale: a fresh `attach` short-circuits
+ * and reports success without actually re-attaching, so the next CDP command
+ * fails with "Debugger is not attached". A `detach` clears the stale flag (it may
+ * itself throw "not attached" — expected, and ignored), after which `attach`
+ * re-attaches for real. We retry the sequence once on that specific error.
+ */
+export async function withReattach(runtime, tabId, run) {
+  await runtime.request("attach", { tabId });
+  try {
+    return await run();
+  } catch (error) {
+    if (!isNotAttachedError(error)) throw error;
+    try {
+      await runtime.request("detach", { tabId });
+    } catch {
+      // Detach throws when the debugger is already gone; we only need its side
+      // effect of clearing the extension's stale attach flag.
+    }
+    await runtime.request("attach", { tabId });
+    return await run();
+  }
+}
+
+export function isNotAttachedError(error) {
+  return /not attached/i.test(error?.message ?? String(error ?? ""));
 }
 
 async function executeCdp(runtime, { tabId, method, params = {}, timeoutMs }) {
