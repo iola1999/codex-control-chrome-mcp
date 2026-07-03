@@ -170,6 +170,33 @@ CDP events come back as notifications:
 }
 ```
 
+## Debugger Attach Lifecycle
+
+The extension's `attach` is idempotent on an in-memory set (`background.js`:
+`if(!se.has(t)) chrome.debugger.attach(...)`). If a tab's real debugger is torn
+down out-of-band (a competing debugger client, DevTools, a renderer/process
+swap) and that flag goes stale, `attach` reports success without re-attaching and
+the next CDP command fails with `Debugger is not attached`.
+
+Since 1.4.0 the client mirrors the official `browser-client.mjs` discipline
+instead of trusting that `attach`:
+
+- `ensureAttached(tabId)` — `attach`, then `Target.setAutoAttach`
+  (`autoAttach`/`flatten`), which keeps child frames/OOPIFs in the session and
+  doubles as a real liveness probe that surfaces a stale attach.
+- `withSession(tabId, run)` — `ensureAttached` → run the CDP sequence → on
+  "not attached" (from the probe or mid-command) `detach` (clears the stale
+  flag) → re-`ensureAttached` → retry once. Every CDP tool
+  (`chrome_navigate`/`evaluate`/`screenshot`/`cdp_send`) goes through it, and
+  `chrome_attach_tab` verifies with a probe instead of returning a hardcoded ok.
+- A **stable per-process `turn_id`**. The extension scopes attach/lease state by
+  `session_id` + `turn_id` (`resolveSession(t).attach(requireTurnId(t))`);
+  minting a fresh turn per request churned that state.
+
+When a debugger/attach issue recurs, start from
+[`docs/troubleshooting.md`](./troubleshooting.md) — it has the reference points
+(official client, extension service worker) and the debugging playbook.
+
 ## Reusing Codex Logic
 
 The preferred long-term reuse point is Codex's `browser-client.mjs`, not the official `extension-host` socket.
@@ -187,7 +214,17 @@ globalThis.nodeRepl.setResponseMeta()
 
 This project can shim those APIs and point `nativePipe.createConnection()` at its own bridge socket. That lets the vendored `browser-client.mjs` reuse its existing high-level browser logic while avoiding Codex App as a dependency.
 
-The initial implementation exposes direct MCP tools first. Vendoring `browser-client.mjs` should be a later phase after the native host bridge is stable.
+The initial implementation exposes direct MCP tools first.
+
+As of 1.4.0 we chose to **align the lifecycle discipline in our own small client**
+(see "Debugger Attach Lifecycle" above) rather than vendor `browser-client.mjs`.
+Vendoring the 983 KB minified bundle into this MIT-licensed, published package
+would redistribute OpenAI's proprietary code (a licensing question), couple us to
+a specific Codex build, and add an opaque, unreviewable dependency. Re-implementing
+the key mechanisms (`ensureAttached`, `Target.setAutoAttach`, stable turn,
+verified attach, self-heal) gets the same behavior while staying MIT-clean and
+reviewable. Full vendoring remains an option only if the redistribution question
+is resolved.
 
 ## Runtime And Launch Model
 

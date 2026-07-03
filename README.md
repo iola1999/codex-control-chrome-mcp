@@ -120,6 +120,7 @@ Because the control entrypoint is inside the normal Chrome profile, existing coo
 Read more:
 
 - [Architecture](./docs/architecture.md)
+- [Troubleshooting & Debugging Playbook](./docs/troubleshooting.md)
 - [Install And Uninstall](./docs/install.md)
 - [Official Socket Probe Notes](./docs/socket-probe.md)
 - [Release Process](./docs/release.md)
@@ -165,6 +166,16 @@ npx -y codex-control-chrome-mcp@latest uninstall-native-host
 ```
 
 If tab or CDP tools fail, use the bundled skill workflow: list tabs again, claim only current tab IDs, attach before raw CDP calls, and read CDP events after enabling the relevant domain.
+
+### "Debugger is not attached" / flaky CDP under concurrency
+
+CDP tools self-heal a stale debugger attachment since 1.4.0 (attach is verified,
+and a lost attachment is recovered with `detach` → re-attach → retry). If you
+still see attach flakiness — most likely when several browser-control stacks
+share one Chrome and contend for the single debugger per tab — see the
+[Troubleshooting & Debugging Playbook](./docs/troubleshooting.md) for the root
+cause, reference points (official client, extension service worker), and the
+`scripts/concurrency-check.mjs` soak test.
 
 See [Install And Uninstall](./docs/install.md#troubleshooting) for the full per-browser checklist (the `registered` flag and host `classification`).
 

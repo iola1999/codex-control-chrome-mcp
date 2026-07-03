@@ -6,6 +6,18 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-04
+
+### Changed
+
+- The debugger attach lifecycle now mirrors the official Codex `browser-client.mjs` discipline instead of trusting the extension's idempotent `attach`. A new `ensureAttached` attaches and then issues `Target.setAutoAttach` (`autoAttach`/`flatten`), which keeps child frames/OOPIFs in the session and doubles as a real liveness probe; `withSession` wraps every CDP tool (`chrome_navigate`/`chrome_evaluate`/`chrome_screenshot`/`chrome_cdp_send`) so a stale or lost attachment — whether it surfaces at the probe or mid-command — is healed once via `detach` → re-attach → retry. `chrome_attach_tab` now verifies the attachment with a probe and reports the real result instead of a hardcoded `{ok:true}`. This supersedes the narrower per-tool self-heal added in 1.3.1/1.3.3.
+- `turn_id` is now stable for the lifetime of the MCP process instead of freshly minted on every request. The extension scopes attach/lease state by `session_id` + `turn_id` (`resolveSession(t).attach(requireTurnId(t))`), so a churning turn re-keyed leases and reset session state on every call. One controller uses one stable turn, matching the official client's turn model.
+
+### Added
+
+- `scripts/concurrency-check.mjs`: a concurrency soak harness that runs N real client sessions against the live bridge and reports unrecovered "not attached" failures (the regression signal) and how many self-heals engaged.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md): a debugging playbook and the reference points (official `browser-client.mjs`, the extension service worker's `se`/attach internals) for future debugger/attach investigations. `docs/architecture.md` gained a "Debugger Attach Lifecycle" section.
+
 ## [1.3.3] - 2026-07-04
 
 ### Fixed

@@ -60,9 +60,14 @@ function browserLabel(browser) {
   return browser === "edge" ? "Edge" : "Chrome";
 }
 
-class ChromeUseRuntime {
+export class ChromeUseRuntime {
   constructor() {
     this.sessionId = `codex-control-chrome-mcp-${crypto.randomUUID()}`;
+    // Stable per-process turn id. The Codex extension scopes attach/lease state
+    // by (session_id, turn_id); minting a fresh turn per request (as we used to)
+    // churned that state and re-keyed tab leases on every call. We are a single
+    // controller, so one stable turn mirrors the official client's turn model.
+    this.turnId = `turn-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
     this.bridge = null;
   }
 
@@ -76,7 +81,7 @@ class ChromeUseRuntime {
   sessionParams() {
     return {
       session_id: this.sessionId,
-      turn_id: `turn-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+      turn_id: this.turnId,
       session_context: "codex-control-chrome-mcp",
     };
   }
@@ -187,7 +192,16 @@ export function registerTools(server, runtime) {
       },
     },
     async ({ tabId }) => {
-      await runtime.request("attach", { tabId });
+      // Verify the attachment for real instead of trusting the extension's
+      // idempotent `attach` (which can report success on a stale flag). The
+      // probe runs a trivial evaluate; withSession heals a stale attach first.
+      await withSession(runtime, tabId, () =>
+        executeCdp(runtime, {
+          tabId,
+          method: "Runtime.evaluate",
+          params: { expression: "1", returnByValue: true },
+        }),
+      );
       return toolResult({ ok: true });
     },
   );
@@ -218,7 +232,7 @@ export function registerTools(server, runtime) {
       },
     },
     async ({ tabId, method, params, timeoutMs }) =>
-      toolResult(await withReattach(runtime, tabId, () =>
+      toolResult(await withSession(runtime, tabId, () =>
         executeCdp(runtime, { tabId, method, params, timeoutMs }),
       )),
   );
@@ -233,7 +247,7 @@ export function registerTools(server, runtime) {
       },
     },
     async ({ tabId, url }) =>
-      toolResult(await withReattach(runtime, tabId, async () => {
+      toolResult(await withSession(runtime, tabId, async () => {
         await executeCdp(runtime, { tabId, method: "Page.enable", params: {} });
         return await executeCdp(runtime, {
           tabId,
@@ -254,7 +268,7 @@ export function registerTools(server, runtime) {
       },
     },
     async ({ tabId, expression, awaitPromise }) =>
-      toolResult(await withReattach(runtime, tabId, async () => {
+      toolResult(await withSession(runtime, tabId, async () => {
         await executeCdp(runtime, { tabId, method: "Runtime.enable", params: {} });
         return await executeCdp(runtime, {
           tabId,
@@ -278,7 +292,7 @@ export function registerTools(server, runtime) {
       },
     },
     async ({ tabId, format }) =>
-      toolResult(await withReattach(runtime, tabId, async () => {
+      toolResult(await withSession(runtime, tabId, async () => {
         await executeCdp(runtime, { tabId, method: "Page.enable", params: {} });
         return await executeCdp(runtime, {
           tabId,
@@ -323,30 +337,66 @@ export function registerTools(server, runtime) {
 }
 
 /**
- * Attach the debugger, run a CDP sequence, and self-heal a stale-attach state.
- *
- * The Codex Chrome extension tracks debugger attachments in memory. When Chrome
- * tears an attachment down out-of-band (a competing debugger client, DevTools, a
- * renderer/process swap), that flag can go stale: a fresh `attach` short-circuits
- * and reports success without actually re-attaching, so the next CDP command
- * fails with "Debugger is not attached". A `detach` clears the stale flag (it may
- * itself throw "not attached" — expected, and ignored), after which `attach`
- * re-attaches for real. We retry the sequence once on that specific error.
+ * Bring `tabId` to a known-attached state, mirroring the official Codex
+ * browser-client's discipline instead of trusting the extension's idempotent
+ * `attach`. The extension only calls `chrome.debugger.attach` when the tab is
+ * absent from its in-memory set (background.js: `if(!se.has(t)) attach()`), so
+ * after an out-of-band detach that flag can go stale and `attach` reports
+ * success with no live debugger. `Target.setAutoAttach` is a real CDP command:
+ * it keeps child frames/OOPIFs in the session (as the official client does) and
+ * doubles as a liveness probe that surfaces a stale attach as "not attached".
  */
-export async function withReattach(runtime, tabId, run) {
+async function ensureAttached(runtime, tabId) {
   await runtime.request("attach", { tabId });
   try {
+    await executeCdp(runtime, {
+      tabId,
+      method: "Target.setAutoAttach",
+      params: { autoAttach: true, flatten: true, waitForDebuggerOnStart: false },
+    });
+  } catch (error) {
+    // A stale attach surfaces here as "not attached"; re-throw so withSession
+    // heals it. Any other setAutoAttach failure is best-effort (some targets
+    // reject it) and must not block the real command.
+    if (isNotAttachedError(error)) throw error;
+  }
+}
+
+/**
+ * Ensure the tab is attached, run a CDP sequence, and self-heal once if the
+ * debugger is torn down out-of-band (a competing debugger client, DevTools, or a
+ * renderer/process swap) — whether that surfaces during the attach probe or
+ * mid-command. Recovery is a `detach`, which clears the extension's stale attach
+ * flag (it may itself throw "not attached" — expected, and ignored), then a real
+ * re-attach via ensureAttached, then one retry.
+ */
+/**
+ * Diagnostics for the self-heal path: `heals` counts how often a stale/lost
+ * attachment was recovered, `unrecovered` how often recovery still failed.
+ * Used by scripts/concurrency-check.mjs to observe behavior under contention.
+ */
+export const sessionStats = { heals: 0, unrecovered: 0 };
+
+export async function withSession(runtime, tabId, run) {
+  try {
+    await ensureAttached(runtime, tabId);
     return await run();
   } catch (error) {
     if (!isNotAttachedError(error)) throw error;
+    sessionStats.heals += 1;
     try {
       await runtime.request("detach", { tabId });
     } catch {
       // Detach throws when the debugger is already gone; we only need its side
       // effect of clearing the extension's stale attach flag.
     }
-    await runtime.request("attach", { tabId });
-    return await run();
+    try {
+      await ensureAttached(runtime, tabId);
+      return await run();
+    } catch (retryError) {
+      if (isNotAttachedError(retryError)) sessionStats.unrecovered += 1;
+      throw retryError;
+    }
   }
 }
 
