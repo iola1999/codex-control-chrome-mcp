@@ -6,6 +6,17 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-03
+
+### Changed
+
+- The native host launcher no longer runs `npx` on every connection. When installed to a stable location (e.g. `npm install -g codex-control-chrome-mcp`), `install-native-host` writes a launcher that execs Node directly against the installed CLI, so the Codex extension connects immediately instead of waiting for npx to resolve/download the package on each Native Messaging connect. A cold or evicted npx cache could take seconds and exceed the extension's connect timeout, which showed up as the bridge "not connecting". The launcher prefers the Node.js used at install time and falls back to `node` on `PATH`, so a Node upgrade (which moves the versioned Homebrew/nvm path) does not strand it.
+- Recommended setup is now a global install followed by `codex-control-chrome-mcp install-native-host`, with the MCP stdio client pointed at the installed `codex-control-chrome-mcp` binary. Running `npx … install-native-host` still works: because that copy lives in npm's garbage-collectable `_npx` cache, the installer detects it and keeps the previous npx launcher as a fallback (install globally and re-run for the fast path).
+
+### Fixed
+
+- `package-lock.json` recorded a stale `1.1.0` project version; it now tracks the package version.
+
 ## [1.2.1] - 2026-07-03
 
 ### Fixed

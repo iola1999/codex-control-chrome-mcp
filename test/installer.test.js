@@ -60,7 +60,12 @@ test("installNativeHost backs up and restores an existing manifest", async () =>
   assert.equal(installedManifest.name, CODEX_NATIVE_HOST_NAME);
   assert.equal(installedManifest.description, "Codex Control Chrome MCP native messaging host");
   assert.equal(installResult.officialHostPath, originalManifest.path);
-  assert.match(launcher, new RegExp(`npx -y ${PACKAGE_NAME}@${PACKAGE_VERSION} --native-host`));
+  // Run from a stable location (the repo checkout), the default install writes a
+  // direct launcher that execs Node against our CLI — no npx in the hot path.
+  assert.equal(installResult.launchMode, "global-bin");
+  assert.doesNotMatch(launcher, /npx/);
+  assert.match(launcher, /--native-host --browser chrome/);
+  assert.match(launcher, /bin\/codex-control-chrome-mcp\.js/);
 
   const backupManifest = JSON.parse(await fs.readFile(installResult.backupPath, "utf8"));
   assert.deepEqual(backupManifest, originalManifest);
@@ -70,6 +75,24 @@ test("installNativeHost backs up and restores an existing manifest", async () =>
 
   assert.equal(uninstallResult.action, "restored");
   assert.deepEqual(restoredManifest, originalManifest);
+});
+
+test("installNativeHost falls back to an npx launcher when run from the npx cache", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codex-control-chrome-mcp-test-"));
+  const paths = tmpPaths(root);
+  // Simulate `npx … install-native-host`: the package resolves inside npm's
+  // `_npx` temp cache, which can be garbage-collected, so a direct launcher
+  // would dangle. The installer must fall back to the (stable) npx launcher.
+  const npxSelfBin = path.join(
+    root, ".npm", "_npx", "deadbeef", "node_modules",
+    "codex-control-chrome-mcp", "bin", "codex-control-chrome-mcp.js",
+  );
+
+  const result = await installNativeHost({ paths, selfBinPath: npxSelfBin });
+  const launcher = await fs.readFile(result.hostPath, "utf8");
+
+  assert.equal(result.launchMode, "npx-launcher");
+  assert.match(launcher, new RegExp(`npx -y ${PACKAGE_NAME}@${PACKAGE_VERSION} --native-host`));
 });
 
 test("installNativeHost prefers the live official host over a stale recorded path", async () => {

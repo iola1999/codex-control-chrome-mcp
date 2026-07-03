@@ -33,8 +33,11 @@ Commands accept `--browser <chrome|edge|all>`. Without it, `install-native-host`
 
 First install and enable the [Codex Chrome Extension](https://chromewebstore.google.com/detail/hehggadaopoacecdllhhajmbjkdcmajg) in the Chrome or Edge profile you want to automate.
 
+Install the package globally, then register the native host:
+
 ```bash
-npx -y codex-control-chrome-mcp@latest install-native-host
+npm install -g codex-control-chrome-mcp
+codex-control-chrome-mcp install-native-host
 ```
 
 Without `--browser`, this installs for every supported browser whose profile directory exists. Pass `--browser <chrome|edge|all>` to target one explicitly.
@@ -46,11 +49,16 @@ This writes a stable per-browser launcher (Edge uses the `-edge` suffix):
 ~/.codex-control-chrome-mcp/native-host-launcher-edge
 ```
 
-The launcher invokes (the `--browser` flag tells the host which browser's config to read for proxy mode):
+Chrome/Edge Native Messaging manifests cannot carry arguments, so the manifest points at this launcher rather than the CLI directly. The launcher execs Node against the installed CLI — no `npx` in the hot path, so the extension connects immediately — and injects `--native-host --browser <name>` (the `--browser` flag tells the host which browser's config to read for proxy mode). It prefers the Node.js used at install time and falls back to `node` on `PATH`, so a Node upgrade does not strand it:
 
-```bash
-npx -y codex-control-chrome-mcp@latest --native-host --browser chrome "$@"
+```sh
+#!/usr/bin/env sh
+node_bin='/path/to/node'
+[ -x "$node_bin" ] || node_bin=node
+exec "$node_bin" '/usr/local/lib/node_modules/codex-control-chrome-mcp/bin/codex-control-chrome-mcp.js' --native-host --browser chrome "$@"
 ```
+
+If you instead run `npx … install-native-host`, the package resolves inside npm's garbage-collectable `_npx` cache, so the installer falls back to a launcher that runs `npx -y codex-control-chrome-mcp@latest --native-host …` on every connect. That works but pays npx's startup cost each time (a cold cache can exceed the extension's connect timeout); install globally and re-run for the direct launcher.
 
 For each selected browser the installer:
 
@@ -91,16 +99,18 @@ Example manifest paths on Linux:
 
 ## MCP Client Config
 
-Use stdio mode from other Agent tools:
+With the package installed globally, point the client at the installed binary:
 
 ```json
 {
   "type": "stdio",
-  "command": "npx",
-  "args": ["-y", "codex-control-chrome-mcp@latest", "--stdio"],
+  "command": "codex-control-chrome-mcp",
+  "args": ["--stdio"],
   "startup_timeout_sec": 30
 }
 ```
+
+If the client does not inherit a `PATH` that includes npm's global bin directory (common for GUI apps), use the absolute path from `npm prefix -g` (e.g. `/opt/homebrew/bin/codex-control-chrome-mcp`) as `command`. Without a global install, `"command": "npx"` with `"args": ["-y", "codex-control-chrome-mcp@latest", "--stdio"]` also works.
 
 If the Agent supports skills, install or reference the bundled skill folder from this package or repository:
 

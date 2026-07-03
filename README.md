@@ -40,40 +40,42 @@ Commands accept `--browser <chrome\|edge\|all>`. Without the flag, `install-nati
 
 Install and enable the [Codex Chrome Extension](https://chromewebstore.google.com/detail/hehggadaopoacecdllhhajmbjkdcmajg) in the Chrome or Edge profile you want to automate.
 
-Install the native host (auto-detects the browsers present):
+Install the package globally, then register the native host (auto-detects the browsers present):
 
 ```bash
-npx -y codex-control-chrome-mcp@latest install-native-host
+npm install -g codex-control-chrome-mcp
+codex-control-chrome-mcp install-native-host
 ```
 
-To target one browser explicitly:
+A global install gives the native host a stable path, so its launcher execs Node directly against the installed CLI with no per-connection `npx` cost. To target one browser explicitly:
 
 ```bash
-npx -y codex-control-chrome-mcp@latest install-native-host --browser edge
+codex-control-chrome-mcp install-native-host --browser edge
 ```
 
-Configure your Agent to use the MCP stdio server:
+Configure your Agent to use the MCP stdio server through the installed binary:
 
 ```json
 {
   "type": "stdio",
-  "command": "npx",
-  "args": ["-y", "codex-control-chrome-mcp@latest", "--stdio"],
+  "command": "codex-control-chrome-mcp",
+  "args": ["--stdio"],
   "startup_timeout_sec": 30
 }
 ```
 
-Check status:
+If your MCP client does not inherit a shell `PATH` that includes npm's global bin directory (common for GUI apps), use the absolute path from `npm prefix -g` — for example `/opt/homebrew/bin/codex-control-chrome-mcp` — as `command`.
+
+Check status and uninstall:
 
 ```bash
-npx -y codex-control-chrome-mcp@latest status
+codex-control-chrome-mcp status
+codex-control-chrome-mcp uninstall-native-host   # restores the previous Codex native host manifest
 ```
 
-Uninstall and restore the previous Codex native host manifest:
+### Without a global install
 
-```bash
-npx -y codex-control-chrome-mcp@latest uninstall-native-host
-```
+`npx -y codex-control-chrome-mcp@latest <command>` still works for every command. Be aware that `npx … install-native-host` writes a launcher that re-runs `npx` on every extension connection; a cold or evicted npx cache can add seconds and may exceed the extension's connect timeout (the bridge then looks stuck "not connecting"). The installer detects the npx temp copy and keeps that launcher as a fallback — install globally and re-run `install-native-host` for the fast, stable path.
 
 ## Agent Skill
 

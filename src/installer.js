@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   APP_STATE_DIR,
   CODEX_EXTENSION_ID,
@@ -26,15 +27,19 @@ export async function installNativeHost({
   proxy = true,
   browser = DEFAULT_BROWSER,
   paths = defaultInstallPaths(browser),
+  selfBinPath = resolveSelfBinPath(),
 } = {}) {
   const { manifestPath, appStateDir, configPath, installStatePath } = paths;
   const browserId = paths.browser ?? browser;
   await fs.mkdir(path.dirname(manifestPath), { recursive: true });
   await fs.mkdir(appStateDir, { recursive: true });
 
-  const hostPath = binPath
-    ? await createLocalLauncher(path.resolve(binPath), appStateDir, browserId)
-    : await createNpxLauncher(appStateDir, browserId);
+  const { hostPath, launchMode } = await createLauncher({
+    binPath,
+    selfBinPath,
+    appStateDir,
+    browser: browserId,
+  });
   const existing = await readJsonIfExists(manifestPath);
   const previousState = await readJsonIfExists(installStatePath);
   const previousBackup = previousState?.backupPath
@@ -68,7 +73,7 @@ export async function installNativeHost({
     manifestPath,
     hostPath,
     binPath: binPath ? path.resolve(binPath) : null,
-    launchMode: binPath ? "direct-bin" : "npx-launcher",
+    launchMode,
     backupPath,
     officialHostPath,
     proxy,
@@ -252,11 +257,68 @@ async function backupManifest(manifestPath) {
   return backupPath;
 }
 
+/**
+ * Choose how the Native Messaging host is launched:
+ *   - `--bin <path>`: a caller-supplied CLI entry (local dev) -> direct launcher.
+ *   - installed to a stable location (e.g. `npm i -g`): our own resolved entry
+ *     -> direct launcher, so every connect skips npx's resolve/download cost.
+ *   - run from npx's temp cache (`npx … install-native-host`): that copy can be
+ *     garbage-collected, so a launcher must not point at it -> npx launcher
+ *     (stable, but pays npx startup on every connect). Install globally and
+ *     re-run for the fast path.
+ */
+async function createLauncher({ binPath, selfBinPath, appStateDir, browser }) {
+  if (binPath) {
+    const hostPath = await createDirectLauncher(
+      path.resolve(binPath),
+      appStateDir,
+      browser,
+      "native-host-local-launcher",
+    );
+    return { hostPath, launchMode: "direct-bin" };
+  }
+  if (isNpxCachePath(selfBinPath)) {
+    const hostPath = await createNpxLauncher(appStateDir, browser);
+    return { hostPath, launchMode: "npx-launcher" };
+  }
+  const hostPath = await createDirectLauncher(
+    selfBinPath,
+    appStateDir,
+    browser,
+    "native-host-launcher",
+  );
+  return { hostPath, launchMode: "global-bin" };
+}
+
 // Each browser gets its own launcher so the native host knows which browser's
 // config to read for proxy mode. Chrome keeps the original unsuffixed filename
 // so manifests written before multi-browser support still resolve.
 function launcherFileName(base, browser) {
   return browser === DEFAULT_BROWSER ? base : `${base}-${browser}`;
+}
+
+/**
+ * A tiny shell shim that execs the installed Node CLI directly (no npx), so the
+ * host starts in milliseconds instead of paying npx's resolve/download cost on
+ * every Native Messaging connect. It prefers the Node.js used at install time
+ * and falls back to `node` on PATH, so a Node upgrade (which moves the versioned
+ * Homebrew/nvm path in process.execPath) does not strand the launcher. Chrome/
+ * Edge Native Messaging manifests cannot carry arguments, so `--native-host` and
+ * `--browser` are injected here.
+ */
+async function createDirectLauncher(binPath, appStateDir, browser, launcherBase) {
+  if (process.platform === "win32" || !binPath.endsWith(".js")) {
+    return binPath;
+  }
+  const launcherPath = path.join(appStateDir, launcherFileName(launcherBase, browser));
+  const script = `#!/usr/bin/env sh
+node_bin=${shellQuote(process.execPath)}
+[ -x "$node_bin" ] || node_bin=node
+exec "$node_bin" ${shellQuote(binPath)} --native-host --browser ${browser} "$@"
+`;
+  await fs.writeFile(launcherPath, script, { encoding: "utf8", mode: 0o755 });
+  await fs.chmod(launcherPath, 0o755);
+  return launcherPath;
 }
 
 async function createNpxLauncher(appStateDir, browser = DEFAULT_BROWSER) {
@@ -272,20 +334,18 @@ exec npx -y ${PACKAGE_NAME}@${PACKAGE_VERSION} --native-host --browser ${browser
   return launcherPath;
 }
 
-async function createLocalLauncher(binPath, appStateDir, browser = DEFAULT_BROWSER) {
-  if (process.platform === "win32") {
-    return binPath;
-  }
-  if (!binPath.endsWith(".js")) {
-    return binPath;
-  }
-  const launcherPath = path.join(appStateDir, launcherFileName("native-host-local-launcher", browser));
-  const script = `#!/usr/bin/env sh
-exec ${shellQuote(process.execPath)} ${shellQuote(binPath)} --browser ${browser} "$@"
-`;
-  await fs.writeFile(launcherPath, script, { encoding: "utf8", mode: 0o755 });
-  await fs.chmod(launcherPath, 0o755);
-  return launcherPath;
+/**
+ * Absolute path to this package's own CLI entry, resolved from the installed
+ * module location so a global (or otherwise stable) install yields a launcher
+ * target that survives package upgrades.
+ */
+function resolveSelfBinPath() {
+  return fileURLToPath(new URL("../bin/codex-control-chrome-mcp.js", import.meta.url));
+}
+
+/** True when a path lives inside npm's `_npx` temp cache (subject to GC). */
+function isNpxCachePath(filePath) {
+  return filePath.split(path.sep).includes("_npx");
 }
 
 function shellQuote(value) {

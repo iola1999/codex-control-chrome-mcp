@@ -107,7 +107,7 @@ If the MCP stdio server is stopped but the native host proxy is still running, C
 ```text
 Other Agent
   -> MCP stdio
-  -> npx -y codex-control-chrome-mcp@latest --stdio
+  -> codex-control-chrome-mcp --stdio
   -> /tmp/codex-browser-use/codex-control-chrome-mcp-*.sock
   -> codex-control-chrome-mcp --native-host
   -> Chrome native messaging stdio
@@ -189,17 +189,17 @@ This project can shim those APIs and point `nativePipe.createConnection()` at it
 
 The initial implementation exposes direct MCP tools first. Vendoring `browser-client.mjs` should be a later phase after the native host bridge is stable.
 
-## NPX Runtime Model
+## Runtime And Launch Model
 
-The intended distribution model is npm plus NPX, not a single packaged binary.
+The package is distributed on npm and run as its installed CLI. A global install (`npm install -g codex-control-chrome-mcp`) gives both entrypoints — the `--stdio` MCP server and the `--native-host` bridge — a stable path.
 
-Agent-side MCP config should use:
+Agent-side MCP config should use the installed binary:
 
 ```json
 {
   "type": "stdio",
-  "command": "npx",
-  "args": ["-y", "codex-control-chrome-mcp@latest", "--stdio"]
+  "command": "codex-control-chrome-mcp",
+  "args": ["--stdio"]
 }
 ```
 
@@ -209,10 +209,15 @@ Chrome Native Messaging manifests cannot store command arguments. Therefore `ins
 ~/.codex-control-chrome-mcp/native-host-launcher
 ```
 
-That launcher runs (the `--browser` flag tells the host which browser's proxy config to read):
+The launcher execs Node directly against the installed CLI (no `npx` in the hot path, so the extension connects without waiting on a package resolve/download) and injects the mode and browser. The `--browser` flag tells the host which browser's proxy config to read:
 
 ```sh
-npx -y codex-control-chrome-mcp@latest --native-host --browser chrome "$@"
+#!/usr/bin/env sh
+node_bin='/path/to/node'
+[ -x "$node_bin" ] || node_bin=node
+exec "$node_bin" '/path/to/codex-control-chrome-mcp/bin/codex-control-chrome-mcp.js' --native-host --browser chrome "$@"
 ```
 
-The native host manifest points to the launcher, not directly to `npx`.
+It prefers the Node.js used at install time and falls back to `node` on `PATH` so a Node upgrade does not strand it. The native host manifest points to the launcher, not to the CLI directly (a manifest cannot pass `--browser`).
+
+When the CLI is instead run through `npx` — its copy lives in npm's garbage-collectable `_npx` cache — `install-native-host` detects that and falls back to a launcher that runs `npx -y codex-control-chrome-mcp@latest --native-host …`. That is stable but pays npx's startup cost on every connect; a global install avoids it.
