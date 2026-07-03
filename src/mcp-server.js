@@ -92,7 +92,7 @@ class ChromeUseRuntime {
   }
 }
 
-function registerTools(server, runtime) {
+export function registerTools(server, runtime) {
   server.registerTool(
     "chrome_status",
     {
@@ -217,7 +217,10 @@ function registerTools(server, runtime) {
         timeoutMs: z.number().int().positive().optional(),
       },
     },
-    async (args) => toolResult(await executeCdp(runtime, args)),
+    async ({ tabId, method, params, timeoutMs }) =>
+      toolResult(await withReattach(runtime, tabId, () =>
+        executeCdp(runtime, { tabId, method, params, timeoutMs }),
+      )),
   );
 
   server.registerTool(

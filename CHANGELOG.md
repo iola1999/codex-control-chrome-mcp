@@ -6,7 +6,11 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
-## [1.3.2] - 2026-07-04
+## [1.3.3] - 2026-07-04
+
+### Fixed
+
+- `chrome_cdp_send` now attaches first and self-heals a stale debugger attachment, matching `chrome_evaluate`/`chrome_navigate`/`chrome_screenshot` (added in 1.3.1). Previously it sent the raw CDP command with no preceding `attach` and no recovery, so any command routed through it (e.g. `Page.close`, `Network.enable`) dead-ended on `Debugger is not attached` whenever the attachment had gone stale — which happens more often when multiple sessions share one browser and contend for the single debugger per tab. It now wraps the command in the same attach → run → (on "not attached") detach → attach → retry-once helper. Note this only recovers one-shot commands: flows that need the debugger to stay attached over time (e.g. `Network.enable` then streaming events via `chrome_read_events`) remain fragile under contention, so prefer page-side APIs (Resource Timing / PerformanceObserver) there.
 
 ### Added
 

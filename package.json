@@ -1,6 +1,6 @@
 {
   "name": "codex-control-chrome-mcp",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "MCP server and native host bridge for controlling Chrome through the Codex Chrome extension.",
   "license": "MIT",
   "type": "module",
