@@ -347,7 +347,13 @@ export function registerTools(server, runtime) {
  * doubles as a liveness probe that surfaces a stale attach as "not attached".
  */
 async function ensureAttached(runtime, tabId) {
-  await runtime.request("attach", { tabId });
+  // The extension's attach handler passes `networkPolicy` straight to its
+  // declarativeNetRequest policy installer, which reads `options.timeoutMs`
+  // before checking anything. Omitting the field throws a TypeError and the
+  // attach never happens. Empty constraints normalize to defaultAction "allow"
+  // with no rules, which the installer returns from without installing
+  // anything, so this keeps the request free of side effects.
+  await runtime.request("attach", { tabId, networkPolicy: { constraints: [] } });
   try {
     await executeCdp(runtime, {
       tabId,

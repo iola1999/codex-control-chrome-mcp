@@ -6,6 +6,12 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-11-11
+
+### Fixed
+
+- `attach` now carries `networkPolicy: { constraints: [] }`. Extension 1.26.1102.11740 passes `e.networkPolicy` to `ar.getInstance().attach(tabId, e.networkPolicy)`, and that installer reads `options.timeoutMs` before any validation, so a request without the field threw `Cannot read properties of undefined (reading 'timeoutMs')` and the debugger never attached. Every CDP tool (`chrome_navigate`, `chrome_evaluate`, `chrome_screenshot`, `chrome_cdp_send`, `chrome_attach_tab`) failed on it. Empty constraints normalize to `defaultAction: "allow"` with no rules, and the installer returns before touching declarativeNetRequest, so the field adds no policy side effect. Verified against the live extension: plain `attach` fails, `attach` with the empty policy succeeds, `Page.navigate` and `Runtime.evaluate` run.
+
 ## [1.4.1] - 2026-07-04
 
 ### Fixed

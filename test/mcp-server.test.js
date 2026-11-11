@@ -11,13 +11,16 @@ const notAttached = () => new Error("Debugger is not attached to the tab with id
 // `alwaysStale`, attach never recovers. `calls` records the RPC method sequence.
 function makeRuntime({ staleUntilReattach = false, alwaysStale = false } = {}) {
   const calls = [];
+  const attachParams = [];
   let attaches = 0;
   return {
     calls,
-    request(method) {
+    attachParams,
+    request(method, params) {
       calls.push(method);
       if (method === "attach") {
         attaches += 1;
+        attachParams.push(params);
         return Promise.resolve({ ok: true });
       }
       if (method === "detach") return Promise.reject(notAttached());
@@ -52,6 +55,9 @@ test("withSession attaches with auto-attach, then runs, when healthy", async () 
   assert.equal(ran, 1);
   // attach + Target.setAutoAttach probe, then the caller's run — no heal.
   assert.deepEqual(runtime.calls, ["attach", "executeCdp"]);
+  // The extension 1.26 attach handler dereferences networkPolicy; a missing
+  // field throws before the debugger attaches.
+  assert.deepEqual(runtime.attachParams[0].networkPolicy, { constraints: [] });
 });
 
 test("withSession self-heals a stale attach surfaced by the probe", async () => {
