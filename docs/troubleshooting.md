@@ -36,6 +36,42 @@ places, none of which are this repo's tool layer:
 3. **This repo's design** — [`docs/architecture.md`](./architecture.md), especially
    "Coexistence With Codex App" (the same-name proxy) and "Reusing Codex Logic".
 
+## No bridge socket
+
+`codex-control-chrome-mcp status` lists the project-owned sockets under
+`/tmp/codex-browser-use/codex-control-chrome-mcp-*.sock`. The native host creates
+one when Chrome starts it and deletes it on exit (`SIGINT`, `SIGTERM`, or process
+exit), so a socket exists only while the extension holds a Native Messaging
+connection. Bare-UUID sockets in the same directory belong to official Codex;
+`status` filters them out and they cannot serve as a backend.
+
+An empty `sockets` list has several distinct causes. Check them in this order:
+
+| Cause | Signal | Fix |
+| --- | --- | --- |
+| The manifest was installed while the browser was already running | `install.<browser>.registered: true`, launcher starts when run by hand | Reload the ChatGPT extension at `chrome://extensions`, or restart the browser. Chrome reads the manifest when the extension opens a connection. |
+| The manifest is missing or was reclaimed by a Codex update | `registered: false`, or `classification.kind: official-openai` | `codex-control-chrome-mcp install-native-host`, then reload the extension. The stdio server also re-asserts the manifest on startup. |
+| The extension is absent or disabled in the profile the window uses | No ChatGPT entry at `chrome://extensions` in that profile | Install or enable it there. Manifests are per user; extension installs are per profile. |
+| The launcher exits immediately | No `--native-host` process; a socket appears and disappears at once | Run the launcher by hand (below) and read the error. Common causes: the global package or the Node path recorded at install time is gone, or the launcher still runs `npx` and its cache was evicted. Reinstall globally, then re-run `install-native-host`. |
+| The manifest is registered for a different browser | The window is Edge and only the Chrome manifest exists | `install-native-host --browser edge`, or `--browser all`. |
+| The extension build targets another host name | A dev or internal build connects to `com.openai.codexextension.dev` / `.internal` | Use the store build, or register the host under the matching name with matching `allowed_origins`. |
+
+To separate an extension-side failure from a host-side one, start the launcher
+directly:
+
+```bash
+~/.codex-control-chrome-mcp/native-host-launcher --native-host --browser chrome
+```
+
+It should print nothing, create a `codex-control-chrome-mcp-<pid>-<uuid>.sock`
+under `/tmp/codex-browser-use`, and stay running. Stop it with Ctrl-C; the host
+deletes the socket on `SIGINT`/`SIGTERM`. Confirm that socket is gone before
+running `status` again, otherwise it looks like a live connection.
+
+Observed in practice: the manifest was written about 44 hours after Chrome
+started, `status` reported `registered: true` with the launcher working, and no
+socket appeared until the extension was disabled and re-enabled.
+
 ## The "Debugger is not attached" failure (root cause)
 
 Three layers stack up:
